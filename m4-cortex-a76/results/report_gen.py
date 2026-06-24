@@ -90,7 +90,7 @@ for key, entry in ops_data.items():
         bench_key = raw_op
         display_op = raw_op
 
-    stats_file = here / bench_key / "stats.txt"
+    stats_file = here / "stats" / bench_key / "stats.txt"
     cycles = read_cycles(stats_file)
     sim_us = cycles / FREQ_MHZ if cycles else None
     real_us = entry["median_us"]

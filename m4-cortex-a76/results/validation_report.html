@@ -145,8 +145,8 @@
 </div>
 
 <div class="chips">
-  <span class="chip pass">0 PASS</span>
-  <span class="chip marginal">0 MARGINAL</span>
+  <span class="chip pass">3 PASS</span>
+  <span class="chip marginal">2 MARGINAL</span>
   <span class="chip skip">3 SKIP</span>
   
 </div>
@@ -175,67 +175,67 @@
   </thead>
   <tbody>
     
-    <tr class='missing'>
+    <tr class='marginal'>
       <td class='op-name'>residual</td>
       <td class='num'>2.042</td>
       <td class='num'>2.334</td>
       <td class='num'>0.156</td>
-      <td class='num'>—</td>
-      <td class='num'>—</td>
-      <td class='ratio-cell missing'>—</td>
+      <td class='num'>10006</td>
+      <td class='num'>5.559</td>
+      <td class='ratio-cell marginal'>2.72×  ~</td>
     </tr>
-    <tr class='missing'>
+    <tr class='pass'>
       <td class='op-name'>rmsnorm</td>
       <td class='num'>23.625</td>
       <td class='num'>23.917</td>
       <td class='num'>0.024</td>
-      <td class='num'>—</td>
-      <td class='num'>—</td>
-      <td class='ratio-cell missing'>—</td>
+      <td class='num'>31208</td>
+      <td class='num'>17.338</td>
+      <td class='ratio-cell pass'>0.73×  ✓</td>
     </tr>
-    <tr class='missing'>
+    <tr class='pass'>
       <td class='op-name'>rope_apply</td>
       <td class='num'>32.374</td>
       <td class='num'>32.666</td>
       <td class='num'>0.020</td>
-      <td class='num'>—</td>
-      <td class='num'>—</td>
-      <td class='ratio-cell missing'>—</td>
+      <td class='num'>79305</td>
+      <td class='num'>44.058</td>
+      <td class='ratio-cell pass'>1.36×  ✓</td>
     </tr>
-    <tr class='missing'>
+    <tr class='marginal'>
       <td class='op-name'>sampling_argmax</td>
       <td class='num'>52.499</td>
       <td class='num'>52.791</td>
       <td class='num'>0.011</td>
-      <td class='num'>—</td>
-      <td class='num'>—</td>
-      <td class='ratio-cell missing'>—</td>
+      <td class='num'>300461</td>
+      <td class='num'>166.923</td>
+      <td class='ratio-cell marginal'>3.18×  ~</td>
     </tr>
     <tr class='skip'>
       <td class='op-name'>softmax_kv128</td>
       <td class='num'>64.749</td>
       <td class='num'>65.041</td>
       <td class='num'>0.019</td>
-      <td class='num'>—</td>
-      <td class='num'>—</td>
+      <td class='num'>10551</td>
+      <td class='num'>5.862</td>
       <td class='ratio-cell skip'>SKIP<span class='note'>numpy dispatch overhead dominates at this size</span></td>
     </tr>
-    <tr class='missing'>
+    <tr class='pass'>
       <td class='op-name'>swiglu</td>
       <td class='num'>170.621</td>
       <td class='num'>171.496</td>
       <td class='num'>0.015</td>
-      <td class='num'>—</td>
-      <td class='num'>—</td>
-      <td class='ratio-cell missing'>—</td>
+      <td class='num'>323255</td>
+      <td class='num'>179.586</td>
+      <td class='ratio-cell pass'>1.05×  ✓</td>
     </tr>
     <tr class='skip'>
       <td class='op-name'>softmax_kv512</td>
       <td class='num'>208.245</td>
       <td class='num'>209.121</td>
       <td class='num'>0.008</td>
-      <td class='num'>—</td>
-      <td class='num'>—</td>
+      <td class='num'>18556</td>
+      <td class='num'>10.309</td>
       <td class='ratio-cell skip'>SKIP<span class='note'>numpy dispatch overhead dominates at this size</span></td>
     </tr>
     <tr class='skip'>
@@ -243,8 +243,8 @@
       <td class='num'>400.741</td>
       <td class='num'>404.825</td>
       <td class='num'>0.008</td>
-      <td class='num'>—</td>
-      <td class='num'>—</td>
+      <td class='num'>28326</td>
+      <td class='num'>15.737</td>
       <td class='ratio-cell skip'>SKIP<span class='note'>numpy dispatch overhead dominates at this size</span></td>
     </tr>
   </tbody>
