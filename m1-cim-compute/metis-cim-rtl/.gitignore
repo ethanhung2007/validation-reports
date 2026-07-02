@@ -1,0 +1,11 @@
+sim/*
+synth/*
+!sim/.gitkeep
+!synth/.gitkeep
+*.jou
+*.log
+*.vcd
+*.wdb
+testbench/vectors/*.mem
+testbench/vectors/*.hex
+reports/

@@ -1,0 +1,184 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>M1 CIM Compute Core · Edge-CIM Phase 1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,600;1,400&family=Noto+Serif+TC:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head><body>
+<nav class="sidebar"><div class="brand">Edge-CIM · Phase 1<small>Component modeling & validation · before Phase 2</small></div><nav><ul><li class="grp">Intro</li><li><a class="" href="00-overview.html"><span class="mc"></span><span>Overview</span></a></li><li><a class="" href="01-readiness.html"><span class="mc"></span><span>Readiness Matrix</span></a></li><li class="grp">Per-Unit</li><li><a class="active" href="02-cim.html"><span class="mc">M1</span><span>CIM Compute Core</span></a></li><li><a class="" href="03-memory.html"><span class="mc">M2</span><span>Memory</span></a></li><li><a class="" href="04-cpu.html"><span class="mc">M4·CPU</span><span>A76 CPU</span></a></li><li><a class="" href="05-gpu.html"><span class="mc">M4·GPU</span><span>Mali GPU</span></a></li><li><a class="" href="06-npu.html"><span class="mc">M4·NPU</span><span>RKNPU2</span></a></li><li class="grp">Cross-Unit</li><li><a class="" href="07-workload.html"><span class="mc">M5</span><span>Workload</span></a></li><li><a class="" href="08-energy-e2e.html"><span class="mc">M7</span><span>Energy + E2E</span></a></li><li><a class="" href="09-phase2-preview.html"><span class="mc">M3/M6</span><span>Phase 2 Preview</span></a></li><li class="grp">Conclusion</li><li><a class="" href="10-gaps.html"><span class="mc"></span><span>Gaps / GO-NOGO</span></a></li><li><a class="" href="11-sources.html"><span class="mc"></span><span>Sources</span></a></li><li><a class="" href="12-thermal.html"><span class="mc">M8</span><span>Thermal</span></a></li></ul></nav></nav>
+<div class="main"><div class="page">
+<header class="masthead">
+  <div class="mcode">M1</div>
+  <div>
+     <div class="eyebrow">Per-Unit · Compute Core · CIM Tile</div>
+    <h1>CIM Compute Core</h1>
+    <p class="lede">The protagonist compute engine of the heterogeneous SoC—all weight-stationary GEMMs (Q/K/V/O projections, FFN gate/up/down, lm_head) live here. This page integrates four layers of results: decode calibration, Card revalidation, prefill amortization, and multi-tile residency cliff.</p>
+  </div>
+</header>
+
+<div class="chips"><span class="chip on" title="validation/reports/phase1.1/m1.json › throughput_fit_gate_native (decode G_eff, 13 native pts) + validation/reports/phase1.2/cim_card_revalidate.json › status=CARD_REVALIDATED + cim_prefill_fit.json (Card M-sweep)">calibrated</span><span class="chip on" title="simulator/models/params/m1_cim.json › G_eff_Gmax_gops/Na/Kb, prefill_tile_a_us/b_us + validation/reports/phase1.5/cim_multitile.json › model (residency cliff)">fitted</span><span class="chip off" title="N/A — M1 is silicon-calibrated; no heavy-sim engine used. Compute ceiling unmodeled (decode is memory-bound, issue #16).">simulated</span><span class="chip on warn" title="simulator/specs/cim_topo_alpha.json › alloc_envelope_MB=14 (~14 MB IOMMU window, forum+inferred) ; cim_topo_edge.json › noc_efficiency=0.9 (pending edge silicon)">assumption</span><span class="chip off" title="none — all fit params self-measured. ISSCC 2024 supplies architecture description (quad-core 512×512), not numeric parameters.">borrowed</span></div>
+
+<section class="unit">
+
+  <div class="sec">
+    <div class="lab"><span class="n">§0</span><span>Role of This Chapter</span></div>
+    <div class="role">
+      <p style="margin-top:0">M1 simulates the <strong>two most fundamental operators</strong> of the CIM compute core. Phase 1 only gets the latency of these two things right, without touching scheduling or multi-unit contention:</p>
+      <p><strong>① GEMV (decode, M=1)</strong>—decode produces one token per step, a weight-stationary <strong>matrix × vector</strong>. <strong>② GEMM (prefill, M&gt;1)</strong>—prefill consumes a batch of M tokens at once, a <strong>matrix × matrix</strong>, where weight is loaded once and reused by M tokens. All Q/K/V/O projections, FFN gate/up/down, and lm_head in the model fall into these two categories.</p>
+      <p style="margin-bottom:0">On the hardware side, the Metis AIPU is a <strong>quad-core</strong>, each core with a <strong>512×512 INT8 digital in-memory (D-IMC) crossbar</strong> (ISSCC 2024). "Weight-stationary" = weights are written into the crossbar and stay put, activations flow through to perform MACs. Throughput is measured in INT8 <strong>GOP/s</strong> (not GFLOP/s). M1 is one of the <strong>few units that touches real silicon and is Card-revalidated</strong>, with nearly all numbers coming from our own on-board measurements.</p>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="lab"><span class="n">§1</span><span>Measurement</span><span class="tag">silicon · GEMV + GEMM</span></div>
+    <p>Measurement protocol: the same 800 MHz AIPU, first measured on Aetina Metis Alpha (pre-production) with <code>run_metis_cim.py</code> + <code>axrunmodel dev_fps</code>, then revalidated on the production Metis Card (16 GiB on-card LPDDR4x) by compiling the same 1×1-conv matmul proxy with <code>axcompile</code>. Both boards run at the same frequency, so GOP/s is directly comparable without clock normalization. We only measure M1's two fundamental operators:</p>
+
+    <h3>1a · GEMV (decode, M=1): Measure "Effective Throughput G_eff"</h3>
+    <p>Decode is matrix × vector for one token per step. The measurement target is <strong>effective throughput G_eff</strong>—the actual INT8 GOP/s achieved by a tile of shape <code>(N, K)</code> (N = output channels, K = contraction dimension / input dimension). 13 native single-tile shapes were measured on Alpha (K∈{2048,3072,3584,4096}, N∈{64…2048}), and Card revalidated the same 13 shapes. The figure below lays out these 13 points:</p>
+    <figure>
+      <img src="../../figures/phase1-site/m1_geff.png" alt="G_eff(N,K) measurement vs 2D fit">
+      <figcaption><strong>How to read:</strong> The horizontal axis is output channels N, the vertical axis is effective throughput G_eff, each line is a K (darker color = larger K). <strong>Why does throughput rise with N then saturate?</strong> At small N, fixed overhead (weight load, DMA) cannot be amortized, utilization is low; as N grows, utilization increases and approaches the saturation ceiling. <strong>Why does larger K give higher throughput?</strong> K is the contraction depth; deeper K lets the same weight residency be amortized over more MACs. Dots = measurement, lines = §2's 2D fit (overlaid here to show goodness of fit). The outlier point in the top-right (K=4096, N=1024) is an honestly presented high-K residual, not hidden.
+        <span class="ft">Fig M1·1 · Source m1_cim.json › native_throughput_points · Script tools/plotting/site_m1.py</span>
+      </figcaption>
+    </figure>
+
+    <h3>1b · GEMM (prefill, M&gt;1): Measure "Tile Latency vs M"</h3>
+    <p>Prefill processes M tokens at once: weight is loaded once and reused by M activation columns. The measurement target is the latency of a canonical 2048×2048 tile at <strong>M∈{2…508} (31 dense points)</strong>—looking at "how the load cost is amortized by M".</p>
+    <figure>
+      <img src="../../figures/phase1-site/m1_prefill.png" alt="prefill M-amortization affine fit">
+      <figcaption><strong>How to read:</strong> Horizontal axis is M (tokens per batch), vertical axis is tile latency. Blue dots are dense Card measurements, black line is affine fit—<strong>intercept = parameter a (fixed load cost), slope = parameter b (marginal cost per additional token)</strong>, these two are §2's GEMM parameters. Orange star is M=1 decode anchor, lying on the leftward extrapolation of the line, proving that prefill and decode regimes bridge properly. Orange dashed line is the real SRAM-tiling compilation wall at ~M=510 (M=508 succeeds, 511 fails); gray dashed line is the old assumption M_MAX=256, underestimating by ~2×.
+        <span class="ft">Fig M1·2 · Source cim_prefill_fit.json + m1_cim.json · Script tools/plotting/site_m1.py</span>
+      </figcaption>
+    </figure>
+  </div>
+
+  <div class="sec">
+    <div class="lab"><span class="n">§2</span><span>Fit</span><span class="tag">equation · parameter-by-parameter explanation</span></div>
+
+    <h3>GEMV (M=1): G_eff 2D Closed Form</h3>
+    <div class="eq">W = n_cores × 512                              <span class="c"># effective output width</span>
+dev_lat(M=1, K, N) = Σ_tiles 2·K·n_tile / G_eff(n_tile, K)   <span class="c">[µs]</span>
+G_eff(N, K) = Gmax · N/(N + Na) · K/(K + Kb)   <span class="c">[GOP/s]</span></div>
+    <p><strong>How the latency formula is derived:</strong> Tiles are cut along the output dimension N. Each tile's workload is <code>2·K·n_tile</code> INT8 ops (factor 2 = one MAC counts as multiply + add, i.e., two ops), <strong>divided by that tile's own effective throughput</strong> G_eff to get time, then summed. The key point is "each tile is charged by its own width"—the last partial tile is not charged as a full tile.</p>
+    <p><strong>Physical meaning of each parameter:</strong></p>
+    <table>
+      <caption>G_eff 2D fit parameters (m1_cim.json, JSON injected)</caption>
+      <thead><tr><th>Parameter</th><th class="num">Value</th><th>Physical Meaning</th></tr></thead>
+      <tbody>
+        <tr class="gen"><td>Gmax</td><td class="num">333.67</td><td>crossbar <strong>saturated throughput ceiling</strong> (GOP/s): the rate when both N and K are large and utilization approaches 1, ≈ total MAC rate of 4 cores</td></tr>
+        <tr class="gen"><td>Na</td><td class="num">577.2</td><td><strong>N half-saturation constant</strong>: when N=Na, throughput reaches half of Gmax. Smaller Na = small output width can saturate the crossbar</td></tr>
+        <tr class="gen"><td>Kb</td><td class="num">574.1</td><td><strong>K half-saturation constant</strong>: same for contraction depth; reaches half at K=Kb. Explains "deeper K is more efficient"</td></tr>
+        <tr class="gen"><td>n_cores · W</td><td class="num">4 · 2048</td><td>Number of cores and <strong>effective output width</strong> W=n_cores×512: the upper limit on the number of channels that can be output in parallel</td></tr>
+      </tbody>
+    </table>
+    <figure class="half">
+      <img src="../../figures/phase1-site/m1_parity.png" alt="G_eff measurement vs prediction parity">
+      <figcaption><strong>How to read:</strong> Horizontal axis is measurement, vertical axis is model prediction; points closer to the diagonal are more accurate. Dark and light blue bands are ±10% / ±20% tolerance. All 13 points fall within ±20%, median within ±10%—this is the visual version of the §4 ADR-0006 threshold PASS. The point on the right hugging the +20% edge is the high-K residual point.
+        <span class="ft">Fig M1·3 · Source m1_cim.json (g_eff vs native_throughput_points) · Script tools/plotting/site_m1.py</span>
+      </figcaption>
+    </figure>
+
+    <h3>GEMM (M&gt;1): M-amortization Affine Fit</h3>
+    <div class="eq">tile_lat(M) = a + b·M                          <span class="c"># latency of one 2048×2048 tile</span>
+full_GEMM_lat(M, K, N) = (K·N / W²) · tile_lat(M)   <span class="c"># fractional area, not ceil</span></div>
+    <p>Weight is loaded once and reused by M activation columns, so latency vs M is <strong>affine (a straight line)</strong>; its measurement points and fit line are shown in §1b Fig M1·2 above. M=1 decode is a <strong>different regime</strong> and not included in this fit (mistakenly using G_eff to linearly extrapolate decode to large M would severely overestimate by one to two orders of magnitude; the affine form eliminates this bias). <strong>Physical meaning of each parameter:</strong></p>
+    <table>
+      <caption>prefill affine + decode anchor (cim_prefill_fit.json, JSON injected)</caption>
+      <thead><tr><th>Parameter</th><th class="num">Value</th><th>Physical Meaning</th></tr></thead>
+      <tbody>
+        <tr class="gen"><td>a (weight load)</td><td class="num">40.8 µs</td><td><strong>Intercept</strong>: fixed cost of writing weight into the crossbar, independent of M</td></tr>
+        <tr class="gen"><td>b (per activation col)</td><td class="num">0.094 µs/col</td><td><strong>Slope</strong>: marginal cost per additional token. Small b means each token is nearly free once load is amortized (why prefill is efficient)</td></tr>
+        <tr class="gen"><td>asymptote</td><td class="num">89.2 TOPS</td><td>M→∞ <strong>equivalent compute power</strong>: pure compute ceiling after weight load is fully amortized</td></tr>
+        <tr class="gen"><td>decode anchor (M=1)</td><td class="num">41.83 µs · 200.5 GOP/s</td><td>M=1 measurement <strong>anchor</strong>: confirms that affine law extrapolated back to M=1 bridges with decode regime</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="sec">
+    <div class="lab"><span class="n">§3</span><span>Simulation · Multi-tile / Extrapolation</span><span class="tag">no heavy-sim · analytic extrapolation</span></div>
+    <p>M1 <strong>does not carry any heavy-sim engine</strong> (decode is entirely memory-bound, compute ceiling does not need modeling, issue #16). "Simulation" in this section = <strong>analytic extrapolation beyond the measurement envelope</strong>, supported by a residency-cliff model calibrated from Card-native multi-tile measurements.</p>
+    <div class="note"><b>Revised previous assumption:</b> <code>axcompile</code> can compile more than just a single 2048×2048 tile. Phase 1.5 compiled natively on Card up to K·N≈17M. M=1 throughput rises smoothly with K·N until <strong>knee≈8.2M params</strong> (weights resident in on-chip SRAM), then <strong>collapses ~3.5× to a DRAM-spill floor of ~70 GOP/s</strong>. Real decode FFN/lm_head GEMVs (K·N≥16M) fall in the spill regime—the old tile-sum underestimated by ~3×; the new cliff model is needed for per-op M1 latency to be correct for Phase 2.</div>
+    <table>
+      <caption>residency-cliff two-regime model (cim_multitile.json, JSON injected)</caption>
+      <thead><tr><th>Parameter</th><th class="num">Value</th><th>Physical Meaning</th></tr></thead>
+      <tbody>
+        <tr class="gen"><td>knee (inflection point)</td><td class="num">8.2 M params</td><td>When total weight exceeds this value, it <strong>no longer fits in on-chip SRAM</strong> and starts spilling to DRAM. ≈ on-chip SRAM weight capacity, physically well-defined</td></tr>
+        <tr class="gen"><td>spill floor</td><td class="num">70 GOP/s</td><td>Floor value where throughput after spill is <strong>locked by DRAM bandwidth</strong> (~M2's effective BW), no longer varying with K·N</td></tr>
+        <tr class="gen"><td>native envelope</td><td class="num">17 M</td><td>Upper limit of K·N that <code>axcompile</code> can <strong>natively compile</strong> on Card; points beyond this value are <strong>linearly extrapolated</strong> along the spill floor (low risk)</td></tr>
+      </tbody>
+    </table>
+    <figure>
+      <img src="../../figures/phase1-site/m1_cliff.png" alt="Multi-tile residency cliff: throughput vs K·N">
+      <figcaption>M=1 native multi-tile throughput rises with K·N: hollow points are single-tile context, blue points are SRAM-resident (rising with K·N), after crossing the knee≈8.2M params <strong>collapses ~3.5× to a DRAM-spill floor of ~70 GOP/s</strong> (orange squares). The gray background region (K·N &gt; native envelope 17M) is floor extrapolation. Real decode FFN/lm_head GEMVs fall in the spill regime.
+        <span class="ft">Fig M1·4 · Source cim_card_revalidate_raw.json + m1_cim.json › multitile_* · Script tools/plotting/site_m1.py</span>
+      </figcaption>
+    </figure>
+  </div>
+
+  <div class="sec">
+    <div class="lab"><span class="n">§4</span><span>Validation Gate</span><span class="tag">ADR-0006</span></div>
+    <table>
+      <caption>decode G_eff fit threshold (ADR-0006 Phase 1.1, 13 native pts)</caption>
+      <thead><tr><th>Metric</th><th class="num">Value</th><th class="num">Threshold</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr class="gen"><td>median rel_err</td><td class="num">2.7%</td><td class="num">≤ 10%</td><td class="pass">✅ PASS</td></tr>
+        <tr class="gen"><td>p95 rel_err</td><td class="num">14.9%</td><td class="num">≤ 20%</td><td class="pass">✅ PASS</td></tr>
+        <tr class="gen"><td>max rel_err</td><td class="num">17.6%</td><td class="num">—</td><td>Reported, not hidden</td></tr>
+      </tbody>
+    </table>
+    <table>
+      <caption>Card Revalidation (cim_card_revalidate.json › status=CARD_REVALIDATED, 13 pts)</caption>
+      <thead><tr><th>Metric</th><th class="num">Value</th><th class="num">Tolerance</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr class="gen"><td>median |rel_diff|</td><td class="num">4.8%</td><td class="num">≤ 10%</td><td class="pass">✅ PASS</td></tr>
+        <tr class="gen"><td>p95 |rel_diff|</td><td class="num">9.7%</td><td class="num">≤ 20%</td><td class="pass">✅ PASS</td></tr>
+      </tbody>
+    </table>
+    <p>Alpha's <code>G_eff(N,K)</code> is therefore Card-confirmed, freeze lifted (decision: retain Alpha fit). Card is systematically slightly lower than Alpha (12/13 points), with larger differences at small N, converging at large N—a small cross-SDK-version shift, within tolerance.</p>
+    <table>
+      <caption>prefill affine + multi-tile cliff fit quality (cim_prefill_fit / cim_multitile.json)</caption>
+      <thead><tr><th>Item</th><th class="num">fit max</th><th class="num">hold-out median</th><th>Range</th></tr></thead>
+      <tbody>
+        <tr class="gen"><td>prefill affine</td><td class="num">3.1%</td><td class="num">0.9%</td><td>M∈{2…508}</td></tr>
+        <tr class="gen"><td>multi-tile cliff (new)</td><td class="num">12.5%</td><td class="num">3.3%</td><td>K·N ≤ 17M</td></tr>
+        <tr><td>multi-tile (old tile-sum, comparison)</td><td class="num">100%</td><td class="num">median 31%</td><td>Deprecated</td></tr>
+      </tbody>
+    </table>
+    <div class="note"><b>True wall position underestimated by ~2×.</b> Dense sweep compiled up to M=508 all succeed, M=511 onwards fail—the real SRAM-tiling wall is nailed at ~M=510, about 2× the old assumption of 256. The wall is real (SRAM-related), only its position was underestimated by a factor of two.</div>
+  </div>
+
+  <div class="sec">
+    <div class="lab"><span class="n">§5</span><span>Phase-2 Readiness</span></div>
+    <table>
+      <thead><tr><th>Item</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>M=1 decode <code>dev_lat_us(K,N)</code> interface</td><td class="pass">✅ Frozen, calibrated</td></tr>
+        <tr><td>M&gt;1 prefill <code>dev_lat_us(M,K,N)</code> (dense M∈{2…508})</td><td class="pass">✅ Frozen, calibrated (hold-out 0.9%)</td></tr>
+        <tr><td>prefill M &gt; 508</td><td class="fail">⚠ Extrapolated (real wall ~M=510; M=511 fails)</td></tr>
+        <tr><td>Multi-tile residency cliff (K·N ≤ 17M)</td><td class="pass">✅ Calibrated (Card-native)</td></tr>
+        <tr><td>Multi-tile K·N &gt; 17M (spill floor)</td><td class="fail">⚠ Extrapolated (memory-bound linear, low risk)</td></tr>
+        <tr><td>Card-revalidated, freeze lifted</td><td class="pass">✅ CARD_REVALIDATED</td></tr>
+        <tr><td><code>CimTileModel</code> + <code>params/m1_cim.json</code></td><td class="pass">✅ Modularized, Phase 2 calls directly</td></tr>
+        <tr><td>edge topology <code>noc_efficiency=0.9</code></td><td class="fail">⚠ Assumption, awaiting edge silicon calibration</td></tr>
+      </tbody>
+    </table>
+    <p>No blocking gap: M1 interface is stable, Phase 1 end-to-end recompose already passed 8B hold-out (9.5%) on the M1 calibrated decode path. <strong>Phase 2 still needs:</strong> prefill end-to-end TTFT validation, edge <code>noc_efficiency</code> calibration, multi-tile spill M&gt;1 behavior (cliff was measured primarily at M=1).</p>
+  </div>
+
+  <div class="sources">
+    <div class="lab">Sources · Every number traces back to a committed artifact</div>
+    <ol>
+      <li>decode G_eff threshold: <code>validation/reports/phase1.1/m1.json › throughput_fit_gate_native</code></li>
+      <li>Card revalidation: <code>validation/reports/phase1.2/cim_card_revalidate.json › status, consistency</code></li>
+      <li>prefill affine: <code>validation/reports/phase1.2/cim_prefill_fit.json › affine_fit_tile_lat_us</code></li>
+      <li>multi-tile cliff: <code>validation/reports/phase1.5/cim_multitile.json › model, old_vs_new, resident_holdout</code></li>
+      <li>KV-append SPIKE: <code>validation/reports/phase1.5/kv_append_spike.json › verdict</code></li>
+      <li>fit parameters / architecture: <code>simulator/models/params/m1_cim.json</code>; contract <code>validation/contracts/m1.yaml</code></li>
+      <li>raw measurements: <code>measurements/aetina/metis_alpha_matmul.json</code>, <code>measurements/metis_card/cim_card_revalidate_raw.json</code></li>
+      <li>recompose hold-out: <code>validation/reports/phase1.1/recompose.json › rel_error_8b</code></li>
+    </ol>
+  </div>
+
+</section>
+
+</div></div></body></html>
